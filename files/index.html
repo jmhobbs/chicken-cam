@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<title>Buttercup Farm Chicken Cam</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.0.0/css/bootstrap.min.css" media="screen" />
+		<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.0.0/css/bootstrap-theme.min.css"  media="screen" />
+		<!-- HTML5 shim and Respond.js IE8 support of HTML5 elements and media queries -->
+		<!--[if lt IE 9]>
+		<script src="../../assets/js/html5shiv.js"></script>
+		<script src="../../assets/js/respond.min.js"></script>
+		<![endif]-->
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="Buttercup Farm Chicken Cam" />
+		<meta property="og:locale" content="en_US" />
+		<meta property="og:description" content="21 chicks from three breeds. Black Australorp, Silver Laced Wyandotte and Ameraucana." />
+		<meta property="og:title" content="Watch the chickens of Buttercup farm live!" />
+		<meta property="og:url" content="/" />
+		<meta property="og:image" content="opengraph.jpg" />
+	</head>
+	<body>
+		<div class="container">
+			<div class="row" style="margin-top: 50px;">
+				<div class="col-md-4">
+					<div class="panel panel-info">
+						<div class="panel-heading">
+							<h3 class="panel-title">Buttercup Chicken Cam</h3>
+						</div>
+						<div class="panel-body">
+							<p>
+								Chicken cam is a near real-time view of the chickens at Buttercup farm,
+								just outside Omaha, NE.
+							</p>
+							<p>
+								Say hello <a href="http://twitter.com/buttercupomaha">@buttercupomaha</a>
+							</p>
+						</div>
+					</div>
+				</div>
+				<div class="col-md-8">
+						<div class="alert alert-danger" id="error-message" style="display: none;">
+							<strong>Uh-oh!</strong><br/>
+							Looks like we are having connection issues. Please be patient!
+						</div>
+						<img src="sad.png" alt="Error" id="sad" style="width: 50%; margin: 0 auto; display: none;" />
+						<img src="loading.jpg" alt="Loading..." id="chicken-cam" style="width: 100%;" />
+				</div>
+			</div>
+		</div>
+
+		<script src="//cdnjs.cloudflare.com/ajax/libs/zepto/1.0rc1/zepto.min.js"></script>
+		<script>
+			$(function () {
+				var $chicken_cam = $('#chicken-cam');
+				$chicken_cam.on('load', function () { $('#error-message, #sad').hide(); $chicken_cam.show(); setTimeout(update, {{UPDATE_INTERVAL}}); });
+				$chicken_cam.on('error', function () { $('#error-message, #sad').show(); $chicken_cam.hide(); setTimeout(update, {{ERROR_RETRY_TIMEOUT}}); });
+				function update () {
+					$chicken_cam.attr('src', '/image?t=' + (+new Date()));
+				}
+				update();
+			});
+		</script>
+
+	</body>
+</html>

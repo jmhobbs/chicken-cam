@@ -49,15 +49,20 @@
 		</div>
 
 		<script src="//cdnjs.cloudflare.com/ajax/libs/zepto/1.0rc1/zepto.min.js"></script>
+		<script src="/socket.io/socket.io.js"></script>
 		<script>
 			$(function () {
 				var $chicken_cam = $('#chicken-cam');
-				$chicken_cam.on('load', function () { $('#error-message, #sad').hide(); $chicken_cam.show(); setTimeout(update, {{UPDATE_INTERVAL}}); });
-				$chicken_cam.on('error', function () { $('#error-message, #sad').show(); $chicken_cam.hide(); setTimeout(update, {{ERROR_RETRY_TIMEOUT}}); });
-				function update () {
-					$chicken_cam.attr('src', '/image?t=' + (+new Date()));
-				}
-				update();
+
+				function onError () { $('#error-message, #sad').show(); $chicken_cam.hide(); }
+				function updateFrame () { $chicken_cam.attr('src', '/image?t=' + (+new Date())); }
+				$chicken_cam.on('error', onError);
+				$chicken_cam.on('load', function () { $('#error-message, #sad').hide(); $chicken_cam.show(); });
+				updateFrame();
+
+				var socket = io.connect('{{ SOCKETIO_HOST }}');
+				socket.on('frame_ready', updateFrame);
+				socket.on('disconnect', onError);
 			});
 		</script>
 

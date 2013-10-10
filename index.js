@@ -35,10 +35,19 @@ if( DEBUG ) {
 // State
 var current_frame,
     current_frame_timestamp,
-    last_request = +(new Date());
+    last_request = +(new Date()),
+    web_root = fs.realpathSync('./httpdocs');
+
+// content-type detection for lazy bums
+var extensions_content_types = {'jpg': 'image/jpeg', 'png': 'image/png'},
+    content_type_for_path = function ( path ) {
+      var match = path.match(/\.([a-z0-4]*)$/);
+      if( null === match ) { return 'application/octet-stream'; }
+      return extensions_content_types[match[1]];
+    };
 
 // HTML "template"
-var index_template = fs.readFileSync('./files/index.html', {encoding: 'utf8'});
+var index_template = fs.readFileSync('./templates/index.html', {encoding: 'utf8'});
 
 // Stats
 var started = +(new Date()),
@@ -80,7 +89,7 @@ var webcamRequestError = function (e) {
   setTimeout(fetchFrame, BACKOFF_INTERVAL);
 };
 
-function fetchFrame () {
+var fetchFrame = function () {
   if(( +(new Date()) - last_request ) > SLEEP_TIMEOUT) {
     if( ! is_asleep ) {
       if( DEBUG ) { console.log('Going to sleep.'); }
@@ -101,25 +110,9 @@ function fetchFrame () {
       .on('error', webcamRequestError)
       .end();
   }
-}
+};
 
 /////////////////////////////////////////////////////
-
-function sendFileOrDie(response, filename, content_type, binary) {
-  fs.readFile('./files/' + filename, function read(err, data) {
-    if (err) {
-      response.writeHead(500, {'Content-Type': 'text/plain'});
-      response.end('500 - Internal Server Error');
-    }
-    response.writeHead(200, {"Content-Type": content_type, "Content-Length": data.length});
-    if( binary ) {
-      response.end(data, 'binary');
-    }
-    else {
-      response.end(data);
-    }
-  });
-}
 
 var http_server = http.createServer(function (request, response) {
   if( DEBUG ) { console.log('Incoming Request:', request.url); }
@@ -132,15 +125,6 @@ var http_server = http.createServer(function (request, response) {
       .replace('{{UPDATE_INTERVAL}}', Math.min(REFRESH_INTERVAL, Math.floor(mean_fetch_duration)));
     response.writeHead(200, {"Content-Type": 'text/html', "Content-Length": data.length});
     response.end(data);
-  }
-  else if (request.url === '/sad.png') {
-    sendFileOrDie(response, 'sad.png', 'image/png', true);
-  }
-  else if (request.url === '/loading.jpg') {
-    sendFileOrDie(response, 'loading.jpg', 'image/jpeg', true);
-  }
-  else if (request.url === '/opengraph.jpg') {
-    sendFileOrDie(response, 'opengraph.jpg', 'image/jpeg', true);
   }
   else if (request.url === '/status.json' ) {
     response.writeHead(200, {"Content-Type": "application/json"});
@@ -170,8 +154,39 @@ var http_server = http.createServer(function (request, response) {
     response.end(current_frame, 'binary');
   }
   else {
-    response.writeHead(404, {'Content-Type': 'text/plain'});
-    response.end('404 - Not Found');
+    fs.realpath(web_root + request.url, function (err, resolved_path) {
+
+      if( undefined === resolved_path ) {
+        response.writeHead(404, {'Content-Type': 'text/plain'});
+        response.end('404 - Not Found');
+        return;
+      }
+
+      if( err ) {
+        response.writeHead(500, {'Content-Type': 'text/plain'});
+        response.end('500 - Internal Server Error');
+        return;
+      }
+
+      // stay in the web root
+      if( 0 !== resolved_path.indexOf(web_root) ) {
+        response.writeHead(403, {'Content-Type': 'text/plain'});
+        response.end('403 - Forbidden');
+        return;
+      }
+
+      fs.readFile(resolved_path, function read(err, data) {
+        
+        if (err) {
+          response.writeHead(500, {'Content-Type': 'text/plain'});
+          response.end('500 - Internal Server Error');
+        }
+
+        response.writeHead(200, {"Content-Type": content_type_for_path(resolved_path), "Content-Length": data.length});
+        response.end(data, 'binary');
+      });
+
+    });
   }
 });
 

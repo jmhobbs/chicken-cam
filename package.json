@@ -2,8 +2,10 @@
   "name": "chicken-cam",
   "version": "0.0.1",
   "dependencies": {
-    "socket.io": "~0.9.16"
-	},
+    "socket.io": "~0.9.16",
+    "redis": "~0.8.6",
+    "hiredis": "~0.1.15"
+  },
   "engines": {
     "node": "0.10.x",
     "npm": "1.2.x"

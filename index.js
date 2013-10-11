@@ -1,7 +1,8 @@
 var http = require('http'),
     http_server = http.createServer(httpRouter),
     io = require('socket.io').listen(http_server),
-    fs = require('fs');
+    fs = require('fs'),
+    redis_client;
 
 /////////////////////////////////////////////////////////////////////////
 // Load Config
@@ -15,6 +16,8 @@ var HTTPD_PORT = process.env.PORT || 8000,
     DEBUG = ('TRUE' === (process.env.DEBUG || 'FALSE')),
     // Where do we connect to socket.io?
     SOCKETIO_HOST = process.env.SOCKETIO_HOST || '/',
+    // Redis URL
+    REDIS_URL = (process.env.REDIS_URL || process.env.REDISTOGO_URL || process.env.OPENREDIS_URL || null),
     // Where should files be served from?
     WEB_ROOT;
 
@@ -27,23 +30,87 @@ var webcam_request_options = {
 
 if( DEBUG ) {
   console.log(' ===== Configuration Summary =====');
-  console.log(' =          HTTPD_PORT:', HTTPD_PORT);
-  console.log(' =    BACKOFF_INTERVAL:', BACKOFF_INTERVAL);
-  console.log(' =    REFRESH_INTERVAL:', REFRESH_INTERVAL);
-  console.log(' =       SOCKETIO_HOST:', SOCKETIO_HOST);
-  console.log(' =         WEBCAM_HOST:', webcam_request_options.host);
-  console.log(' =         WEBCAM_PORT:', webcam_request_options.port);
-  console.log(' =         WEBCAM_PATH:', webcam_request_options.path);
+  console.log(' =        HTTPD_PORT:', HTTPD_PORT);
+  console.log(' =  BACKOFF_INTERVAL:', BACKOFF_INTERVAL);
+  console.log(' =  REFRESH_INTERVAL:', REFRESH_INTERVAL);
+  console.log(' =     SOCKETIO_HOST:', SOCKETIO_HOST);
+  console.log(' =         REDIS_URL:', REDIS_URL);
+  console.log(' =       WEBCAM_HOST:', webcam_request_options.host);
+  console.log(' =       WEBCAM_PORT:', webcam_request_options.port);
+  console.log(' =       WEBCAM_PATH:', webcam_request_options.path);
 }
 
 /////////////////////////////////////////////////////////////////////////
 // Variables and util
 
+// init redis if we are using it
+if( REDIS_URL !== null ) {
+  var url = require("url").parse(REDIS_URL),
+		  redis = require("redis"),
+	    RedisStore = require('socket.io/lib/stores/redis'),
+      pub = redis.createClient(url.port, url.hostname),
+      sub = redis.createClient(url.port, url.hostname);
+
+	redis_client = redis.createClient(url.port, url.hostname);
+
+  if( url.auth ) {
+    redis_client.auth(url.auth.split(":")[1], function (err) { if (err) { throw err; } });
+    pub.auth(url.auth.split(":")[1], function (err) { if (err) { throw err; } });
+    dubt.auth(url.auth.split(":")[1], function (err) { if (err) { throw err; } });
+  }
+
+	io.set('store', new RedisStore({
+		redis: redis,
+	  redisPub: pub,
+	  redisSub: sub,
+	  redisClient: redis_client
+	}));
+
+}
+
 // State
 var current_frame = null,
     is_asleep = false,
-    clients_connected = 0,
     fetch_start = 0;
+    
+var clients = (function () {
+
+  var use_redis          = ('undefined' !== typeof redis_client),
+      _in_memory_counter = 0,
+      counter_key_name   = "chicken-cam:clients";
+
+  if(DEBUG) { console.log('Client counter is using ' + ((use_redis) ? 'redis' : 'memory')); }
+
+  return {
+    connected: function (fn) {
+      if( use_redis ) {
+        redis_client.get( counter_key_name, function ( err, val ) {
+          if( null === val ) { fn(0); }
+          else { fn(parseInt(val, 10)); }
+        });
+      }
+      else {
+        fn(_in_memory_counter);
+      }
+    },
+    connect: function () {
+      if( use_redis ) {
+        redis_client.incr(counter_key_name);
+      }
+      else {
+        _in_memory_counter++;
+      }
+    },
+    disconnect: function () {
+      if( use_redis ) {
+        redis_client.decr(counter_key_name);
+      }
+      else {
+        _in_memory_counter--;
+      }
+    }
+  };
+}());
 
 // content-type detection for lazy bums
 var extensions_content_types = {'jpg': 'image/jpeg', 'png': 'image/png'};
@@ -92,20 +159,22 @@ function serveIndex ( response ) {
  * Serve a status JSON page.
  */
 function serveStatus ( response ) {
-  response.writeHead(200, {"Content-Type": "application/json"});
-  response.end(JSON.stringify({
-    uptime: Math.floor((timestamp() - stats.started) / 1000),
-    clients_connected: clients_connected,
-    frames: stats.frames,
-    mean_fetch_duration: stats.mean_fetch_duration,
-    sleeps: stats.sleeps,
-    wakeups: stats.wakeups,
-    is_asleep: is_asleep,
-    config: {
-      BACKOFF_INTERVAL: BACKOFF_INTERVAL,
-      REFRESH_INTERVAL: REFRESH_INTERVAL
-    }
-  }));
+  clients.connected(function (clients_connected) {
+    response.writeHead(200, {"Content-Type": "application/json"});
+    response.end(JSON.stringify({
+      uptime: Math.floor((timestamp() - stats.started) / 1000),
+      clients_connected: clients_connected,
+      frames: stats.frames,
+      mean_fetch_duration: stats.mean_fetch_duration,
+      sleeps: stats.sleeps,
+      wakeups: stats.wakeups,
+      is_asleep: is_asleep,
+      config: {
+        BACKOFF_INTERVAL: BACKOFF_INTERVAL,
+        REFRESH_INTERVAL: REFRESH_INTERVAL
+      }
+    }));
+  });
 }
 
 /**
@@ -198,37 +267,37 @@ function webcamRequestError ( err ) {
 }
 
 function fetchFrame () {
-  if(0 >= clients_connected && null !== current_frame) {
-    if( DEBUG ) { console.log('Going to sleep.'); }
-    is_asleep = true;
-    stats.sleeps++;
-  }
-  else {
-    if( is_asleep ) {
-      if( DEBUG ) { console.log('Woke up.'); }
-      is_asleep = false;
-      stats.wakeups++;
+  clients.connected(function (clients_connected) {
+    if(0 >= clients_connected && null !== current_frame) {
+      if( DEBUG ) { console.log('Going to sleep.'); }
+      is_asleep = true;
+      stats.sleeps++;
     }
-    if( DEBUG ) { console.log('Requesting new frame.'); }
-    fetch_start = timestamp();
-    http.request(webcam_request_options, webcamRequestCallback)
-      .on('error', webcamRequestError)
-      .end();
-  }
+    else {
+      if( is_asleep ) {
+        if( DEBUG ) { console.log('Woke up.'); }
+        is_asleep = false;
+        stats.wakeups++;
+      }
+      if( DEBUG ) { console.log('Requesting new frame.'); }
+      fetch_start = timestamp();
+      http.request(webcam_request_options, webcamRequestCallback)
+        .on('error', webcamRequestError)
+        .end();
+    }
+  });
 }
 
 /////////////////////////////////////////////////////////////////////////
 // Socket IO
 
 io.sockets.on('connection', function (socket) {
-  clients_connected++;
-  if( DEBUG ) { console.log('socket connect;', clients_connected); }
+  clients.connect();
 
   if( is_asleep ) { fetchFrame(); }
 
   socket.on('disconnect', function () {
-    clients_connected--;
-    if( DEBUG ) { console.log('socket disconnect;', clients_connected); }
+    clients.disconnect();
   });
 });
 

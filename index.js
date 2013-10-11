@@ -46,12 +46,12 @@ if( DEBUG ) {
 // init redis if we are using it
 if( REDIS_URL !== null ) {
   var url = require("url").parse(REDIS_URL),
-		  redis = require("redis"),
-	    RedisStore = require('socket.io/lib/stores/redis'),
+      redis = require("redis"),
+      RedisStore = require('socket.io/lib/stores/redis'),
       pub = redis.createClient(url.port, url.hostname),
       sub = redis.createClient(url.port, url.hostname);
 
-	redis_client = redis.createClient(url.port, url.hostname);
+  redis_client = redis.createClient(url.port, url.hostname);
 
   if( url.auth ) {
     redis_client.auth(url.auth.split(":")[1], function (err) { if (err) { throw err; } });
@@ -59,12 +59,12 @@ if( REDIS_URL !== null ) {
     dubt.auth(url.auth.split(":")[1], function (err) { if (err) { throw err; } });
   }
 
-	io.set('store', new RedisStore({
-		redis: redis,
-	  redisPub: pub,
-	  redisSub: sub,
-	  redisClient: redis_client
-	}));
+  io.set('store', new RedisStore({
+    redis: redis,
+    redisPub: pub,
+    redisSub: sub,
+    redisClient: redis_client
+  }));
 
 }
 
@@ -72,7 +72,10 @@ if( REDIS_URL !== null ) {
 var current_frame = null,
     is_asleep = false,
     fetch_start = 0;
-    
+
+// Client counter. Defaults to in-memory, but uses redis if available.
+// This exists because I didn't find a reliable, sane looking way of 
+// getting a connected clients count from socket.io.
 var clients = (function () {
 
   var use_redis          = ('undefined' !== typeof redis_client),
@@ -85,12 +88,13 @@ var clients = (function () {
     connected: function (fn) {
       if( use_redis ) {
         redis_client.get( counter_key_name, function ( err, val ) {
-          if( null === val ) { fn(0); }
-          else { fn(parseInt(val, 10)); }
+          if( err ) { fn(err, null); }
+          else if( null === val ) { fn(null, 0); }
+          else { fn(null, parseInt(val, 10)); }
         });
       }
       else {
-        fn(_in_memory_counter);
+        fn(null, _in_memory_counter);
       }
     },
     connect: function () {
@@ -159,7 +163,13 @@ function serveIndex ( response ) {
  * Serve a status JSON page.
  */
 function serveStatus ( response ) {
-  clients.connected(function (clients_connected) {
+  clients.connected(function (err, clients_connected) {
+    if( err ) {
+      response.writeHead(500, {"Content-Type": 'text/plain'});
+      response.end('500 - Internal Server Error');
+      return;
+    }
+
     response.writeHead(200, {"Content-Type": "application/json"});
     response.end(JSON.stringify({
       uptime: Math.floor((timestamp() - stats.started) / 1000),
@@ -267,7 +277,12 @@ function webcamRequestError ( err ) {
 }
 
 function fetchFrame () {
-  clients.connected(function (clients_connected) {
+  clients.connected(function (err, clients_connected) {
+    if( err ) {
+      setTimeout(fetchFrame, BACKOFF_INTERVAL);
+      return;
+    }
+
     if(0 >= clients_connected && null !== current_frame) {
       if( DEBUG ) { console.log('Going to sleep.'); }
       is_asleep = true;
